@@ -453,9 +453,9 @@ Framework.GetOwnedVehicles = function(src)
     return vehicles
 end
 
-Framework.IsVehicleOwned = function(src, vehicle)
+Framework.IsVehicleOwned = function(src, plate)
     local citizenId = Framework.GetPlayerIdentifier(src)
-    local result = MySQL.Sync.fetchAll("SELECT id FROM owned_vehicles WHERE owner = '" .. citizenId .. "' AND vehicle = '" .. vehicle .. "'")
+    local result = MySQL.Sync.fetchAll("SELECT id FROM owned_vehicles WHERE owner = '" .. citizenId .. "' AND plate = '" .. plate .. "'")
     local id = result[1].id
     local vehicle = result[1].vehicle
     local plate = result[1].plate
