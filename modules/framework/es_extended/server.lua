@@ -441,13 +441,14 @@ end
 --- @return table
 Framework.GetOwnedVehicles = function(src)
     local citizenId = Framework.GetPlayerIdentifier(src)
-    local result = MySQL.Sync.fetchAll("SELECT vehicle, plate FROM owned_vehicles WHERE owner = '" .. citizenId .. "'")
+    local result = MySQL.Sync.fetchAll("SELECT id, vehicle, plate FROM owned_vehicles WHERE owner = '" .. citizenId .. "'")
     local vehicles = {}
     for i = 1, #result do
         local vehicle = result[i].vehicle
+        local id = result[i].id
         local plate = result[i].plate
         local model = json.decode(vehicle).model
-        table.insert(vehicles, { vehicle = model, plate = plate })
+        table.insert(vehicles, { id = id, vehicle = model, plate = plate })
     end
     return vehicles
 end
