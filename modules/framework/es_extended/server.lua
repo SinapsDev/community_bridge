@@ -453,6 +453,16 @@ Framework.GetOwnedVehicles = function(src)
     return vehicles
 end
 
+Framework.IsVehicleOwned = function(src, vehicle)
+    local citizenId = Framework.GetPlayerIdentifier(src)
+    local result = MySQL.Sync.fetchAll("SELECT id FROM owned_vehicles WHERE owner = '" .. citizenId .. "' AND vehicle = '" .. vehicle .. "'")
+    local id = result[1].id
+    local vehicle = result[1].vehicle
+    local plate = result[1].plate
+    local model = json.decode(vehicle).model
+    return { id = id, vehicle = model, plate = plate }
+end
+
 --- @description Registers a usable item with a callback function
 --- @param itemName string
 --- @param cb function
