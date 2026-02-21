@@ -55,7 +55,7 @@ Framework.GetIsFrameworkAdmin = function(src)
     local xPlayer = Framework.GetPlayer(src)
     if not xPlayer then return false end
     local group = xPlayer.getGroup()
-    if group == 'admin' or group == 'superadmin' then return true end
+    if group == 'admin' or group == 'superadmin' or group == 'owner' then return true end
     return false
 end
 
