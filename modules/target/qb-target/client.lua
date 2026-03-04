@@ -73,8 +73,13 @@ function Target.AddGlobalPlayer(options)
 end
 
 ---This will remove target options from all players.
-function Target.RemoveGlobalPlayer()
-    qb_target:RemoveGlobalPlayer()
+---@param options table
+function Target.RemoveGlobalPlayer(options)
+    local assembledLables = {}
+    for k, v in pairs(options) do
+        table.insert(assembledLables, v.label)
+    end
+    qb_target:RemoveGlobalPlayer(assembledLables)
 end
 
 ---This will add target options to all specified models. This is useful for when you want to add target options to all models of a specific type.
