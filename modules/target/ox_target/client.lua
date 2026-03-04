@@ -59,8 +59,13 @@ function Target.AddGlobalPlayer(options)
 end
 
 ---This will remove target options from all players.
-function Target.RemoveGlobalPlayer()
-    ox_target:removeGlobalPlayer()
+---@param options table
+function Target.RemoveGlobalPlayer(options)
+    local assembledLables = {}
+    for k, v in pairs(options) do
+        table.insert(assembledLables, v.name)
+    end
+    ox_target:removeGlobalPlayer(assembledLables)
 end
 
 ---This will add target options to all specified models. This is useful for when you want to add target options to all models of a specific type.
