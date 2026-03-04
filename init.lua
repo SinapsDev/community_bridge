@@ -53,6 +53,7 @@ Bridge.RegisterModule("Housing", Housing)
 Bridge.RegisterModule("Version", Version)
 Bridge.RegisterModule("Require", Require)
 Bridge.RegisterModule("Skills", Skills)
+Bridge.RegisterModule("Prison", Prison)
 
 for k, v in pairs(cLib) do
     if v then

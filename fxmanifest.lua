@@ -33,6 +33,7 @@ server_scripts {
     'modules/housing/**/server.lua',
     'modules/skills/**/server.lua',
     'modules/bossmenu/**/server.lua',
+    'modules/prison/**/server.lua',
     "lib/**/server.lua",
     'init.lua',
 }
