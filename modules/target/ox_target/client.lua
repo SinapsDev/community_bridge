@@ -184,23 +184,33 @@ end
 ---@param name string
 function Target.RemoveZone(name)
     if not name then return end
-    for _, data in pairs(targetZones) do
+    -- Iterate in reverse and DON'T break on the first hit: callers that
+    -- registered the same zone name multiple times across restart cycles
+    -- (e.g. when the consumer reloaded its setup logic) would otherwise leave
+    -- stale entries that later resolve to non-existent ox_target zone ids and
+    -- emit "attempted to remove a zone that does not exist" warnings.
+    for i = #targetZones, 1, -1 do
+        local data = targetZones[i]
         if data.name == name then
-            ox_target:removeZone(data.id)
-            table.remove(targetZones, _)
-            break
+            ox_target:removeZone(data.id, true)
+            table.remove(targetZones, i)
         end
     end
 end
 
+-- Clean up zones whenever ANY consumer resource stops, not just when
+-- community_bridge itself stops. The previous `if resource ~= GetCurrentResourceName() then return end`
+-- guard never matched consumer stops because GetCurrentResourceName() returns
+-- 'community_bridge' here, so zones piled up across restarts.
 AddEventHandler('onResourceStop', function(resource)
-    if resource ~= GetCurrentResourceName() then return end
-    for _, target in pairs(targetZones) do
+    if not resource then return end
+    for i = #targetZones, 1, -1 do
+        local target = targetZones[i]
         if target.creator == resource then
-            ox_target:removeZone(target.id)
+            ox_target:removeZone(target.id, true)
+            table.remove(targetZones, i)
         end
     end
-    targetZones = {}
 end)
 
 return Target

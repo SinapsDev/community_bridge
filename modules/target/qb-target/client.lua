@@ -213,23 +213,34 @@ end
 ---@param name string
 function Target.RemoveZone(name)
     if not name then return end
-    for _, data in pairs(targetZones) do
-        if data.name == name then
-            qb_target:RemoveZone(name)
-            table.remove(targetZones, _)
-            break
+    -- Iterate in reverse and DON'T break on the first hit: callers that
+    -- registered the same zone name multiple times across restart cycles
+    -- would otherwise leave stale entries behind.
+    local removed = false
+    for i = #targetZones, 1, -1 do
+        if targetZones[i].name == name then
+            table.remove(targetZones, i)
+            removed = true
         end
+    end
+    if removed then
+        qb_target:RemoveZone(name)
     end
 end
 
+-- Clean up zones whenever ANY consumer resource stops, not just when
+-- community_bridge itself stops. The previous `if resource ~= GetCurrentResourceName() then return end`
+-- guard never matched consumer stops because GetCurrentResourceName() returns
+-- 'community_bridge' here, so zones piled up across restarts.
 AddEventHandler('onResourceStop', function(resource)
-    if resource ~= GetCurrentResourceName() then return end
-    for _, target in pairs(targetZones) do
+    if not resource then return end
+    for i = #targetZones, 1, -1 do
+        local target = targetZones[i]
         if target.creator == resource then
             qb_target:RemoveZone(target.name)
+            table.remove(targetZones, i)
         end
     end
-    targetZones = {}
 end)
 
 return Target
