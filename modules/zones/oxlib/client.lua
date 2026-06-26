@@ -65,7 +65,6 @@ function cZones.Create(type, data)
             end,
         })
         data.zone = zone
-        print("Created Zone: " .. data.id, json.encode(cZones.All))
         cZones.All[data.id] = data
         return data.id
     elseif type == "sphere" then
