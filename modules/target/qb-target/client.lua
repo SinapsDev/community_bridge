@@ -1,12 +1,18 @@
 ---@diagnostic disable: duplicate-set-field
 local resourceName = "qb-target"
-if GetResourceState(resourceName) == 'missing' then return end
-if GetResourceState("ox_target") ~= 'missing' then return end
+local configValue = BridgeClientConfig and BridgeClientConfig.TargetSystem or "auto"
+if configValue == "auto" then
+    if GetResourceState(resourceName) == 'missing' then return end
+    if GetResourceState("ox_target") ~= 'missing' then return end
+elseif configValue ~= resourceName then
+    return
+end
+local targetResource = configValue ~= "auto" and BridgeClientConfig.TargetResource ~= "" and BridgeClientConfig.TargetResource or resourceName
 
 Target = Target or {}
 local targetDebug = BridgeSharedConfig and BridgeSharedConfig.DebugLevel == 2 or false
 local targetZones = {}
-local qb_target = exports['qb-target']
+local qb_target = exports[targetResource]
 
 function Target.GetResourceName()
     return "qb-target"
