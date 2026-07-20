@@ -567,7 +567,10 @@ end
 --- @param cb function
 Framework.RegisterUsableItem = function(itemName, cb)
     local func = function(src, item, itemData)
-        itemData = itemData or item
+        if type(itemData) ~= "table" then
+            itemData = type(item) == "table" and item or {}
+        end
+        itemData.name = itemData.name or (type(item) == "string" and item) or itemName
         itemData.metadata = itemData.metadata or itemData.info or {}
         itemData.slot = itemData.id or itemData.slot
         cb(src, itemData)
