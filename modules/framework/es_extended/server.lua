@@ -521,18 +521,34 @@ Framework.SetMetadata = function(src, item, slot, metadata)
     return false
 end
 
+--- owned_vehicles is not the same table on every ESX version, so a query error
+--- here must not travel up into the resource that asked.
+local function QueryOwnedVehicles(query, parameters)
+    local success, result = pcall(MySQL.query.await, query, parameters)
+    if not success then
+        print("The owned_vehicles query failed, please ensure your database matches the ESX schema: " .. tostring(result))
+        return {}
+    end
+    return result or {}
+end
+
+--- The vehicle column holds the encoded vehicle properties, not a model on its own.
+local function DecodeVehicleModel(vehicleData)
+    if type(vehicleData) ~= "string" then return nil end
+    local success, decoded = pcall(json.decode, vehicleData)
+    if not success or type(decoded) ~= "table" then return nil end
+    return decoded.model
+end
+
 ---@description This will get all owned vehicles for the player
 --- @param src number
 --- @return table
 Framework.GetOwnedVehicles = function(src)
     local citizenId = Framework.GetPlayerIdentifier(src)
-    local result = MySQL.Sync.fetchAll("SELECT vehicle, plate FROM owned_vehicles WHERE owner = '" .. citizenId .. "'")
+    local result = QueryOwnedVehicles("SELECT vehicle, plate FROM owned_vehicles WHERE owner = ?", { citizenId })
     local vehicles = {}
     for i = 1, #result do
-        local vehicle = result[i].vehicle
-        local plate = result[i].plate
-        local model = json.decode(vehicle).model
-        table.insert(vehicles, { vehicle = model, plate = plate })
+        table.insert(vehicles, { vehicle = DecodeVehicleModel(result[i].vehicle), plate = result[i].plate })
     end
     return vehicles
 end
@@ -543,13 +559,10 @@ end
 ---@return table
 Framework.IsVehicleOwnedByPlayer = function(src, plate)
     local citizenId = Framework.GetPlayerIdentifier(src)
-    local result = MySQL.Sync.fetchAll("SELECT vehicle, plate FROM owned_vehicles WHERE owner = '" .. citizenId .. "' AND plate = '" .. plate .. "'")
+    local result = QueryOwnedVehicles("SELECT vehicle, plate FROM owned_vehicles WHERE owner = ? AND plate = ?", { citizenId, plate })
     if not result[1] then return false end
 
-    local id = result[1].id
-    local vehicle = result[1].vehicle
-    local model = json.decode(vehicle).model
-    return { vehicle = model, plate = plate }
+    return { vehicle = DecodeVehicleModel(result[1].vehicle), plate = plate }
 end
 
 --- @description Returns the citizen identifier of the player who owns the vehicle with the given plate, or nil.
