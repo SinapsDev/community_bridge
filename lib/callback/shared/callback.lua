@@ -15,6 +15,20 @@ local function generateCallbackId(name)
     return string.format('%s_%d', name, math.random(1000000, 9999999))
 end
 
+-- Run a callback handler without letting an error swallow the response:
+-- an uncaught error used to skip the reply, leaving the caller waiting forever.
+local CallbackOwners = {}
+
+local function runHandler(kind, name, handler, ...)
+    local result = table.pack(xpcall(handler, debug.traceback, ...))
+    if result[1] then
+        return true, table.pack(table.unpack(result, 2, result.n))
+    end
+    print(string.format("^1[%s] %s callback '%s' (registered by %s) errored, replying with no result so the caller does not hang:^0\n%s",
+        RESOURCE, kind, tostring(name), CallbackOwners[name] or 'unknown', tostring(result[2])))
+    return false, { n = 0 }
+end
+
 local function handleResponse(registry, name, callbackId, ...)
     local data = registry[callbackId]
     if not data then return end
@@ -58,6 +72,7 @@ end
 if IsDuplicityVersion() then
     function Callback.Register(name, handler)
         Callback[name] = handler
+        CallbackOwners[name] = GetInvokingResource() or RESOURCE
     end
 
     function Callback.Trigger(name, target, ...)
@@ -75,8 +90,8 @@ if IsDuplicityVersion() then
         local playerId = source
         if not playerId or playerId == 0 then return print(string.format("[%s] Warning: Invalid source for callback '%s'", RESOURCE, name)) end
 
-        local result = table.pack(handler(playerId, ...))
-        TriggerClientEvent(EVENT_NAMES.CLIENT_RESPONSE, playerId, name, callbackId, table.unpack(result))
+        local _, result = runHandler('Server', name, handler, playerId, ...)
+        TriggerClientEvent(EVENT_NAMES.CLIENT_RESPONSE, playerId, name, callbackId, table.unpack(result, 1, result.n))
     end)
 
     RegisterNetEvent(EVENT_NAMES.SERVER_RESPONSE, function(name, callbackId, ...)
@@ -90,6 +105,7 @@ else
 
     function Callback.Register(name, handler)
         ClientCallbacks[name] = handler
+        CallbackOwners[name] = GetInvokingResource() or RESOURCE
     end
 
     function Callback.RegisterRebound(name, handler)
@@ -127,8 +143,8 @@ else
         local handler = ClientCallbacks[name]
         if not handler then return end
 
-        local result = table.pack(handler(...))
-        TriggerServerEvent(EVENT_NAMES.SERVER_RESPONSE, name, callbackId, table.unpack(result))
+        local _, result = runHandler('Client', name, handler, ...)
+        TriggerServerEvent(EVENT_NAMES.SERVER_RESPONSE, name, callbackId, table.unpack(result, 1, result.n))
     end)
 end
 

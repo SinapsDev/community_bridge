@@ -24,6 +24,7 @@ function Bridge.RegisterModule(moduleName, moduleTable)
     Bridge[moduleName] = wrappedModule
 
     exports(moduleName, function()
+        BridgeLateLoad.NoteConsumer(GetInvokingResource())
         return wrappedModule
     end)
 
@@ -55,6 +56,10 @@ Bridge.RegisterModule("Require", Require)
 Bridge.RegisterModule("Skills", Skills)
 Bridge.RegisterModule("Prison", Prison)
 
+-- Framework/BossMenu modules whose resource has not started yet load later
+-- (lib/utility/shared/latemodules.lua); export forwarders meanwhile.
+BridgeLateLoad.InstallForwarders()
+
 for k, v in pairs(cLib) do
     if v then
         Bridge.RegisterModule(k, v)
@@ -62,6 +67,7 @@ for k, v in pairs(cLib) do
 end
 
 exports('Bridge', function()
+    BridgeLateLoad.NoteConsumer(GetInvokingResource())
     return Bridge
 end)
 

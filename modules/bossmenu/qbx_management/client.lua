@@ -1,5 +1,5 @@
 ---@diagnostic disable: duplicate-set-field
-if GetResourceState('qbx_management') ~= 'started' then return end
+if not BridgeLateLoad.Gate('BossMenu', 'qbx_management', 'modules/bossmenu/qbx_management/client.lua', BridgeLateLoad.BossMenus) then return end
 
 BossMenu = BossMenu or {}
 

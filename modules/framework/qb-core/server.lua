@@ -1,5 +1,5 @@
 ---@diagnostic disable: duplicate-set-field
-if GetResourceState('qb-core') ~= 'started' then return end
+if not BridgeLateLoad.Gate('Framework', 'qb-core', 'modules/framework/qb-core/server.lua', BridgeLateLoad.Frameworks) then return end
 if GetResourceState('qbx_core') == 'started' then return end
 
 Framework = Framework or {}

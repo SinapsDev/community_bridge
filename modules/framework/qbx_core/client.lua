@@ -1,5 +1,5 @@
 ---@diagnostic disable: duplicate-set-field
-if GetResourceState('qbx_core') ~= 'started' then return end
+if not BridgeLateLoad.Gate('Framework', 'qbx_core', 'modules/framework/qbx_core/client.lua', BridgeLateLoad.Frameworks) then return end
 
 QBox = exports.qbx_core
 
