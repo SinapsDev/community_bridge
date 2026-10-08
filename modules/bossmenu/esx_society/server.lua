@@ -1,5 +1,5 @@
 ---@diagnostic disable: duplicate-set-field
-if GetResourceState('esx_society') ~= 'started' then return end
+if not BridgeLateLoad.Gate('BossMenu', 'esx_society', 'modules/bossmenu/esx_society/server.lua', BridgeLateLoad.BossMenus) then return end
 
 BossMenu = BossMenu or {}
 

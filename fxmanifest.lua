@@ -5,12 +5,13 @@ use_experimental_fxv2_oal 'yes'
 author 'The Order of the Sacred Framework'
 name 'community_bridge'
 description 'A Universal Bridge for Our Community, created by a group of contributors with a shared vision to enhance both user and developer experiences. This bridge connects various frameworks, inventories, target systems, notification systems, and more, fostering compatibility and seamless integration.'
-version '0.13.8'
+version '0.13.9'
 
 shared_scripts {
     '@ox_lib/init.lua',
     'settings/sharedConfig.lua',
     'lib/init.lua',
+    'lib/utility/shared/latemodules.lua',
     'modules/locales/*.lua',
     'modules/clothing/**/shared.lua',
 }
