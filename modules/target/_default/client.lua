@@ -2,7 +2,9 @@
 Target = Target or {}
 Ids = Ids or Require("lib/utility/shared/ids.lua")
 
-local InteractIds = {}
+-- global so a second load of this file (Require of modules/target/_default/init.lua) keeps the ids already handed out
+TargetInteractIds = TargetInteractIds or {}
+local InteractIds = TargetInteractIds
 
 local function warnUser()
     print("Currently Only Targeting Is Supported By Community Bridge, You Are Using A Resource That Requires The Target Module To Be Used.")
@@ -21,24 +23,31 @@ function Target.CreateCanInteract(cb)
     local id = Ids.CreateUniqueId(InteractIds)
     InteractIds[id] = {
         id = id,
-        ableToInteract = -1,
-        onInteract = cb
+        onInteract = cb,
+        results = {},
+        sweepAt = 0,
     }
     return id
 end
 
-function Target.CanInteract(id, ...)
+-- the result is cached for 1 s per option and per entity, so one player's result never shows on another
+function Target.CanInteract(id, entity, ...)
     local interactData = InteractIds[id]
-    if not interactData then return true end
-    if interactData.ableToInteract == -1 then
-        local cb = interactData.onInteract
-        local canInteractStatus = cb(...)
-        interactData.ableToInteract = canInteractStatus and 1 or 0
-        SetTimeout(1000, function()
-            interactData.ableToInteract = -1
-        end)
+    if not interactData then return false end
+    local key = entity or 0
+    local cached = interactData.results[key]
+    if cached and GetGameTimer() < cached.expires then return cached.ok end
+
+    local ok = interactData.onInteract(entity, ...) and true or false
+    local now = GetGameTimer()
+    if now >= interactData.sweepAt then
+        for k, v in pairs(interactData.results) do
+            if now >= v.expires then interactData.results[k] = nil end
+        end
+        interactData.sweepAt = now + 5000
     end
-    return interactData.ableToInteract > 0
+    interactData.results[key] = { ok = ok, expires = now + 1000 }
+    return ok
 end
 
 function Target.FixOptions(options)
