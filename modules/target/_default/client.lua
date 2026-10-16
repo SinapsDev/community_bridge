@@ -23,8 +23,9 @@ function Target.CreateCanInteract(cb)
     local id = Ids.CreateUniqueId(InteractIds)
     InteractIds[id] = {
         id = id,
-        ableToInteract = -1,
-        onInteract = cb
+        onInteract = cb,
+        results = {},
+        sweepAt = 0,
     }
     return id
 end
@@ -33,14 +34,20 @@ end
 function Target.CanInteract(id, entity, ...)
     local interactData = InteractIds[id]
     if not interactData then return false end
+    local key = entity or 0
+    local cached = interactData.results[key]
+    if cached and GetGameTimer() < cached.expires then return cached.ok end
+
+    local ok = interactData.onInteract(entity, ...) and true or false
     local now = GetGameTimer()
-    if interactData.ableToInteract == -1 or interactData.entity ~= entity or now >= interactData.expires then
-        local canInteractStatus = interactData.onInteract(entity, ...)
-        interactData.ableToInteract = canInteractStatus and 1 or 0
-        interactData.entity = entity
-        interactData.expires = now + 1000
+    if now >= interactData.sweepAt then
+        for k, v in pairs(interactData.results) do
+            if now >= v.expires then interactData.results[k] = nil end
+        end
+        interactData.sweepAt = now + 5000
     end
-    return interactData.ableToInteract > 0
+    interactData.results[key] = { ok = ok, expires = now + 1000 }
+    return ok
 end
 
 function Target.FixOptions(options)
