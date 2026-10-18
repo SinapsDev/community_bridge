@@ -6,8 +6,9 @@ Prison = Prison or {}
 local validLevels = { min = true, med = true, max = true }
 
 local function securityLevel()
-    local configured = BridgeServerConfig and BridgeServerConfig.DHSPrisonSecurity or "min"
-    local level = string.lower(GetConvar("community_bridge:dhs_security", configured))
+    local level = GetConvar("community_bridge:dhs_security", "")
+    if level == "" then level = BridgeServerConfig and BridgeServerConfig.DHSPrisonSecurity or "min" end
+    level = string.lower(tostring(level))
     if validLevels[level] then return level end
     print(("^3[community_bridge] DHS-PrisonSim: invalid security level '%s' (use min, med or max), using 'min'^0"):format(level))
     return "min"
