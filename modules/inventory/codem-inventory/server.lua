@@ -179,6 +179,25 @@ Inventory.AddStashItems = function(id, items)
     return true
 end
 
+---@description This will open the specified stash for the src passed.
+---@param src number
+---@param _type string unused with codem-inventory
+---@param id string
+---@return nil
+Inventory.OpenStash = function(src, _type, id)
+    local stash = Inventory.Stashes[id] or {}
+    TriggerClientEvent("community_bridge:client:codem-inventory:openStash", src, id, { slots = stash.slots, weight = stash.weight, label = stash.label or id })
+end
+
+---@description This will open a players inventory, used for admin purposes and stuff.
+---@param src number
+---@param target number
+Inventory.OpenPlayerInventory = function(src, target)
+    assert(src, "OpenPlayerInventory: src is required")
+    assert(target, "OpenPlayerInventory: target is required")
+    TriggerClientEvent("community_bridge:client:codem-inventory:openPlayerInventory", src, target)
+end
+
 ---@description This will get the image path for an item, it is an alternate option to GetItemInfo. If a image isnt found will revert to community_bridge logo (useful for menus)
 ---@param item string
 ---@return string
