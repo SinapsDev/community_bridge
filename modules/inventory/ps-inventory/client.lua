@@ -34,9 +34,10 @@ end
 
 ---Will return boolean if the player has the item.
 ---@param item string
+---@param requiredCount number (optional)
 ---@return boolean
-Inventory.HasItem = function(item)
-    return ps:HasItem(item)
+Inventory.HasItem = function(item, requiredCount)
+    return ps:HasItem(item, requiredCount or 1)
 end
 
 ---This will get the image path for this item, if not found will return placeholder.
