@@ -69,7 +69,7 @@ end
 ---@return number
 Inventory.GetItemCount = function(src, item, metadata)
     local _item = tgiann:GetItemByName(src, item, metadata)
-    return _item.amount or 0
+    return _item and _item.amount or 0
 end
 
 ---@description This will return the players inventory.
@@ -129,9 +129,10 @@ end
 ---@description This will return a boolean if the player has the item.
 ---@param src number
 ---@param item string
+---@param requiredCount number (optional)
 ---@return boolean
-Inventory.HasItem = function(src, item)
-    return tgiann:HasItem(src, item, 1)
+Inventory.HasItem = function(src, item, requiredCount)
+    return tgiann:HasItem(src, item, requiredCount or 1)
 end
 
 ---@description This is to get if there is available space in the inventory, will return boolean.
