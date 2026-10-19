@@ -36,18 +36,18 @@ end
 
 ---@description Will return boolean if the player has the item.
 ---@param item string
+---@param requiredCount number (optional)
 ---@return boolean
-Inventory.HasItem = function(item)
-    local check = quasar:Search(item)
-    return check and true or false
+Inventory.HasItem = function(item, requiredCount)
+    return Inventory.GetItemCount(item) >= (requiredCount or 1)
 end
 
 ---@description This will return th count of the item in the players inventory, if not found will return 0.
 ---@param item string
 ---@return number
 Inventory.GetItemCount = function(item)
-    local searchItem = quasar:Search(item)
-    return searchItem or 0
+    if type(item) ~= 'string' or item == '' then return 0 end
+    return tonumber(quasar:Search(item)) or 0
 end
 
 ---@description This will get the image path for this item, if not found will return placeholder.

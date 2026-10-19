@@ -206,7 +206,7 @@ end
 ---@param requiredCount number (optional)
 ---@return boolean
 Inventory.HasItem = function(src, item, requiredCount)
-    return origin:getItemCount(src , item) > (requiredCount or 0)
+    return (origin:getItemCount(src, item) or 0) >= (requiredCount or 1)
 end
 
 ---@description This is to get if there is available space in the inventory, will return boolean.

@@ -69,7 +69,7 @@ end
 ---@return number
 Inventory.GetItemCount = function(src, item, metadata)
     local _item = tgiann:GetItemByName(src, item, metadata)
-    return _item.amount or 0
+    return _item and _item.amount or 0
 end
 
 ---@description This will return the players inventory.
