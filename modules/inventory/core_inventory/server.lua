@@ -12,6 +12,57 @@ Inventory.GetResourceName = function()
     return "core_inventory"
 end
 
+-- core_inventory addresses one item two ways: removeItemExact wants its unique
+-- `id` ("itemname-uniqueString"), setMetadata wants its numeric slot. The
+-- framework usable-item hooks hand resources the `id` as `slot`
+-- (modules/framework/*/server.lua RegisterUsableItem), GetPlayerInventory hands
+-- them the numeric slot, so every lookup below accepts either and each export
+-- gets the handle it expects.
+
+-- getInventory may return the item list or the whole inventory ({ content = ... }).
+local function coreContent(src)
+    local inv = core:getInventory(src)
+    if type(inv) ~= 'table' then return nil end
+    if type(inv.content) == 'table' then return inv.content end
+    return inv
+end
+
+-- grid items can span several cells: slot, else the first of slots, else a numeric content key
+local function slotIndexOf(item, key)
+    local slot = tonumber(item.slot)
+    if not slot and type(item.slots) == 'table' then slot = tonumber(item.slots[1]) end
+    return slot or tonumber(key)
+end
+
+local function uniqueIdOf(item, key)
+    if item.id ~= nil and item.id ~= '' then return item.id end
+    if type(key) == 'string' and not tonumber(key) then return key end
+    return nil
+end
+
+local function repackItem(item, key)
+    local id = uniqueIdOf(item, key)
+    return {
+        name = item.name,
+        count = item.count or item.amount or 0,
+        metadata = item.metadata or item.info,
+        slot = slotIndexOf(item, key) or id,
+        id = id,
+    }
+end
+
+-- the repacked entry for a slot number or a unique id, nil if the player doesn't hold it
+local function findEntry(src, handle)
+    if handle == nil then return nil end
+    local slot = tonumber(handle)
+    for _, v in pairs(Inventory.GetPlayerInventory(src) or {}) do
+        if (v.id ~= nil and v.id == handle) or (slot and tonumber(v.slot) == slot) then
+            return v
+        end
+    end
+    return nil
+end
+
 ---This will add an item, and return true or false based on success
 ---@param src number
 ---@param item string
@@ -46,19 +97,22 @@ Inventory.RemoveItem = function(src, item, count, slot, metadata)
             end
         end
     end
-    TriggerClientEvent("community_bridge:client:inventory:updateInventory", src, {action = "remove", item = item, count = count, slot = slot, metadata = metadata})
     if slot then
-        local identifier = Framework.GetPlayerIdentifier(src)
-        if not identifier then return false end
-        local framework = Bridge.Framework.GetFrameworkName()
-        if framework == 'es_extended' then
-            identifier = string.gsub(identifier, ":", "")
+        -- removeItemExact takes the item's unique id, never a slot number
+        -- https://docs.c8re.store/core-inventory/exports
+        local entry = findEntry(src, slot)
+        if not entry or not entry.id or (item and entry.name ~= item) then return false end
+        TriggerClientEvent("community_bridge:client:inventory:updateInventory", src, {action = "remove", item = item, count = count, slot = slot, metadata = metadata})
+        local ok, removed = pcall(function()
+            return core:removeItemExact(src, entry.id, count)
+        end)
+        if not ok then
+            print(("^1[community_bridge] core_inventory removeItemExact failed for %s: %s^0"):format(tostring(entry.id), tostring(removed)))
+            return false
         end
-        local weirdInventoryName = 'content-' .. identifier
-        -- No return value specified in docs, so we assume none.
-        -- https://docs.c8re.store/core-inventory/api/server#removeitemexact
-        return core:removeItemExact(weirdInventoryName, slot, count)
+        return removed ~= false
     end
+    TriggerClientEvent("community_bridge:client:inventory:updateInventory", src, {action = "remove", item = item, count = count, slot = slot, metadata = metadata})
     core:removeItem(src, item, count)
     return true
 end
@@ -89,66 +143,81 @@ end
 ---@param src number
 ---@return table
 Inventory.GetPlayerInventory = function(src)
-    local frameworkInUse = Bridge.Framework.GetFrameworkName()
-    if frameworkInUse == 'qb-core' then
-        return Bridge.Framework.GetPlayerInventory(src)
-    end
-    local playerItems = core:getInventory(src)
-    local repackedTable = {}
-    for _, v in pairs(playerItems) do
-        if (v.metadata or v.info) and (v.count or v.amount) > 1 then
-            local plaseFixThisExportCuzThisIsPainful = core:getItems(src, v.name)
-            if plaseFixThisExportCuzThisIsPainful then
-                for _, item in pairs(plaseFixThisExportCuzThisIsPainful) do
-                    table.insert(repackedTable, {
-                        name = v.name,
-                        count = item.count or item.amount,
-                        metadata = item.metadata or item.info,
-                        slot = item.id or item.slot,
-                    })
-                end
-            end
-        else
-            table.insert(repackedTable, {
-                name = v.name,
-                count = v.count or v.amount,
-                metadata = v.metadata or v.info,
-                slot = v.id or v.slot,
-            })
+    local content = coreContent(src)
+    if not content then
+        if Bridge.Framework.GetFrameworkName() == 'qb-core' then
+            return Bridge.Framework.GetPlayerInventory(src)
         end
+        return {}
+    end
+    local repackedTable = {}
+    local expanded, seen = {}, {}
+    -- getItems and getInventory can both list the same stack
+    local function add(entry)
+        local key = entry.id or entry.slot
+        if key ~= nil then
+            if seen[key] then return end
+            seen[key] = true
+        end
+        table.insert(repackedTable, entry)
+    end
+    for key, v in pairs(content) do
+        if type(v) == 'table' and v.name then
+            local stacks = nil
+            if (v.metadata or v.info) and (tonumber(v.count or v.amount) or 0) > 1 then
+                -- stacked items carrying metadata are listed one by one through getItems
+                if expanded[v.name] then goto continue end
+                stacks = core:getItems(src, v.name)
+                if type(stacks) == 'table' and next(stacks) then expanded[v.name] = true else stacks = nil end
+            end
+            if stacks then
+                for stackKey, item in pairs(stacks) do
+                    if type(item) == 'table' then
+                        local entry = repackItem(item, stackKey)
+                        entry.name = v.name
+                        add(entry)
+                    end
+                end
+            else
+                add(repackItem(v, key))
+            end
+        end
+        ::continue::
     end
     return repackedTable
 end
 
 ---Returns the specified slot data as a table.
----format {weight, name, metadata, slot, label, count}
+---Accepts the numeric slot or the item's unique id (what usable-item callbacks pass as slot).
+---format {name, count, metadata, slot, id}
 ---@param src number
----@param slot number
+---@param slot number|string
 ---@return table
 Inventory.GetItemBySlot = function(src, slot)
-    local inv = Inventory.GetPlayerInventory(src)
-    if not inv then return {} end
-    for _, v in pairs(inv) do
-        if (v.slot == slot) or (v.id == slot) then
-            return {
-                name = v.name,
-                count = v.count,
-                metadata = v.metadata,
-                slot = v.id or v.slot,
-            }
-        end
-    end
-    return {}
+    local v = findEntry(src, slot)
+    if not v then return {} end
+    return {
+        name = v.name,
+        count = v.count,
+        metadata = v.metadata,
+        slot = v.slot,
+        id = v.id,
+    }
 end
 
 ---This will set the metadata of an item in the inventory.
+---Accepts the numeric slot or the item's unique id; core_inventory's setMetadata takes the slot.
 ---@param src number
 ---@param item string
----@param slot number
+---@param slot number|string
 ---@param metadata table
----@return nil
+---@return boolean
 Inventory.SetMetadata = function(src, item, slot, metadata)
-    core:setMetadata(src, slot, metadata)
+    local entry = findEntry(src, slot)
+    if not entry or (item and entry.name ~= item) then return false end
+    -- https://docs.c8re.store/core-inventory/exports : setMetadata(inventory, slotid, metadata)
+    core:setMetadata(src, entry.slot, metadata)
+    return true
 end
 
 ---This will open the specified stash for the src passed.
