@@ -20,11 +20,13 @@ end
 -- gets the handle it expects.
 
 -- getInventory may return the item list or the whole inventory ({ content = ... }).
+-- The second return is true when the table is `content`, whose keys are the items' slots or ids;
+-- a plain list's keys are only positions.
 local function coreContent(src)
     local inv = core:getInventory(src)
     if type(inv) ~= 'table' then return nil end
-    if type(inv.content) == 'table' then return inv.content end
-    return inv
+    if type(inv.content) == 'table' then return inv.content, true end
+    return inv, false
 end
 
 -- grid items can span several cells: slot, else the first of slots, else a numeric content key
@@ -40,6 +42,7 @@ local function uniqueIdOf(item, key)
     return nil
 end
 
+-- key: the content key the item is stored under, nil when it only came with a list position
 local function repackItem(item, key)
     local id = uniqueIdOf(item, key)
     return {
@@ -143,7 +146,7 @@ end
 ---@param src number
 ---@return table
 Inventory.GetPlayerInventory = function(src)
-    local content = coreContent(src)
+    local content, keyed = coreContent(src)
     if not content then
         if Bridge.Framework.GetFrameworkName() == 'qb-core' then
             return Bridge.Framework.GetPlayerInventory(src)
@@ -161,6 +164,14 @@ Inventory.GetPlayerInventory = function(src)
         end
         table.insert(repackedTable, entry)
     end
+    -- slot of each id as getInventory reports it, for getItems rows that carry no slot of their own
+    local slotById = {}
+    for key, v in pairs(content) do
+        if type(v) == 'table' then
+            local entry = repackItem(v, keyed and key or nil)
+            if entry.id ~= nil then slotById[entry.id] = entry.slot end
+        end
+    end
     for key, v in pairs(content) do
         if type(v) == 'table' and v.name then
             local stacks = nil
@@ -171,15 +182,18 @@ Inventory.GetPlayerInventory = function(src)
                 if type(stacks) == 'table' and next(stacks) then expanded[v.name] = true else stacks = nil end
             end
             if stacks then
-                for stackKey, item in pairs(stacks) do
+                for _, item in pairs(stacks) do
                     if type(item) == 'table' then
-                        local entry = repackItem(item, stackKey)
+                        local entry = repackItem(item, nil)
+                        if entry.id ~= nil and entry.slot == entry.id and slotById[entry.id] ~= nil then
+                            entry.slot = slotById[entry.id]
+                        end
                         entry.name = v.name
                         add(entry)
                     end
                 end
             else
-                add(repackItem(v, key))
+                add(repackItem(v, keyed and key or nil))
             end
         end
         ::continue::
