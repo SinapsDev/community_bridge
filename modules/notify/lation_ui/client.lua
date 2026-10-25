@@ -16,7 +16,7 @@ local placeHolderText = locale("Notifications.PlaceholderTitle")
 
 Notify.SendNotify = function(message, _type, time)
     time = time or 3000
-    return exports.lation_ui:notify({ message = message, type = _type or "success", duration = time, position = 'top-right' })
+    return exports.lation_ui:notify({ message = message, type = _type or "success", duration = time, position = BridgeSharedConfig.NotifyPosition or 'top-right' })
 end
 
 ---This will send a notify message of the type and time passed
@@ -29,7 +29,7 @@ end
 Notify.SendNotification = function(title, message, _type, time, props)
     time = time or 3000
     if not title then title = placeHolderText end
-    return exports.lation_ui:notify({ title = title, message = message, type = _type or "success", duration = time, position = 'top-right' })
+    return exports.lation_ui:notify({ title = title, message = message, type = _type or "success", duration = time, position = BridgeSharedConfig.NotifyPosition or 'top-right' })
 end
 
 return Notify
