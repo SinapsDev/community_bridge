@@ -15,7 +15,7 @@ local placeHolderText = locale("Notifications.PlaceholderTitle")
 
 Notify.SendNotify = function(message, _type, time)
     time = time or 3000
-    return exports.ox_lib:notify({ description = message, type = _type, duration = time, position = 'top-right' })
+    return exports.ox_lib:notify({ description = message, type = _type, duration = time, position = BridgeSharedConfig.NotifyPosition or 'top-right' })
 end
 
 ---This will send a notify message of the type and time passed
@@ -28,7 +28,7 @@ end
 Notify.SendNotification = function(title, message, _type, time, props)
     time = time or 3000
     if not title then title = placeHolderText end
-    return exports.ox_lib:notify({ title = title, description = message, type = _type or "success", duration = time, position = 'top-right' })
+    return exports.ox_lib:notify({ title = title, description = message, type = _type or "success", duration = time, position = BridgeSharedConfig.NotifyPosition or 'top-right' })
 end
 
 return Notify
