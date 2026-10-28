@@ -159,13 +159,16 @@ end
 ---@return table
 Framework.GetPlayerJobData = function()
     local playerData = Framework.GetPlayerData()
-    local jobData = playerData.job
+    -- No job yet while the character is still loading (or none selected).
+    local jobData = playerData and playerData.job
+    if not jobData then return {} end
+    local grade = jobData.grade or {}
     return {
         jobName = jobData.name,
         jobLabel = jobData.label,
-        gradeName = jobData.grade.name,
-        gradeLabel = jobData.grade.name,
-        gradeRank = jobData.grade.level,
+        gradeName = grade.name,
+        gradeLabel = grade.name,
+        gradeRank = grade.level,
         boss = jobData.isboss,
         onDuty = jobData.onduty,
     }
