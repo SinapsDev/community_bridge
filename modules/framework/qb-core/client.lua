@@ -52,16 +52,18 @@ end
 ---@description This will get the players birth date
 ---@return string
 Framework.GetPlayerDob = function()
-    local player = Framework.GetPlayerData()
-    local playerData = player.PlayerData
-    return playerData.charinfo.birthdate
+    local playerData = Framework.GetPlayerData()
+    local charinfo = playerData and playerData.charinfo
+    return charinfo and charinfo.birthdate
 end
 
 ---@description This will return the players metadata for the specified metadata key.
 ---@param metadata table | string
 ---@return table | string | number | boolean
 Framework.GetPlayerMetaData = function(metadata)
-    return Framework.GetPlayerData().metadata[metadata]
+    local playerData = Framework.GetPlayerData()
+    local playerMeta = playerData and playerData.metadata
+    return playerMeta and playerMeta[metadata]
 end
 
 ---@description This will send a notification to the player.
@@ -93,8 +95,8 @@ end
 ---@return number
 Framework.GetAccountBalance = function(_type)
     local player = Framework.GetPlayerData()
-    if not player then return 0 end
-    local account = player.money
+    local account = player and player.money
+    if not account then return 0 end
     if _type == 'money' then _type = 'cash' end
     return account[_type] or 0
 end
@@ -141,7 +143,9 @@ end
 ---@return string
 Framework.GetPlayerName = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.charinfo.firstname, playerData.charinfo.lastname
+    local charinfo = playerData and playerData.charinfo
+    if not charinfo then return nil, nil end
+    return charinfo.firstname, charinfo.lastname
 end
 
 ---@deprecated Deprecated: This will return the players job name, job label, job grade label and job grade level
@@ -159,13 +163,16 @@ end
 ---@return table
 Framework.GetPlayerJobData = function()
     local playerData = Framework.GetPlayerData()
-    local jobData = playerData.job
+    -- No job yet while the character is still loading (or none selected).
+    local jobData = playerData and playerData.job
+    if not jobData then return {} end
+    local grade = jobData.grade or {}
     return {
         jobName = jobData.name,
         jobLabel = jobData.label,
-        gradeName = jobData.grade.name,
-        gradeLabel = jobData.grade.name,
-        gradeRank = jobData.grade.level,
+        gradeName = grade.name,
+        gradeLabel = grade.name,
+        gradeRank = grade.level,
         boss = jobData.isboss,
         onDuty = jobData.onduty,
     }
@@ -183,7 +190,8 @@ end
 ---@param item string
 ---@return number
 Framework.GetItemCount = function(item)
-    local frameworkInv = Framework.GetPlayerData().items
+    local playerData = Framework.GetPlayerData()
+    local frameworkInv = playerData and playerData.items or {}
     local count = 0
     for _, v in pairs(frameworkInv) do
         if v.name == item then
@@ -197,7 +205,8 @@ end
 ---@return table
 Framework.GetPlayerInventory = function()
     local items = {}
-    local frameworkInv = Framework.GetPlayerData().items
+    local playerData = Framework.GetPlayerData()
+    local frameworkInv = playerData and playerData.items or {}
     for _, v in pairs(frameworkInv) do
         table.insert(items, {
             name = v.name,
@@ -248,7 +257,9 @@ end
 ---@return boolean
 Framework.GetIsPlayerDead = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.metadata["isdead"] or playerData.metadata["inlaststand"]
+    local playerMeta = playerData and playerData.metadata
+    if not playerMeta then return false end
+    return playerMeta["isdead"] or playerMeta["inlaststand"]
 end
 
 ---@description Event handler for when player is loaded in QB-Core framework
