@@ -58,8 +58,15 @@ function Target.AddGlobalPlayer(options)
 end
 
 ---This will remove target options from all players.
-function Target.RemoveGlobalPlayer()
-    sleepless_interact:removeGlobalPlayer()
+---Pass the options given to AddGlobalPlayer: they are removed by name. No options removes nothing, as before.
+---@param options? table
+function Target.RemoveGlobalPlayer(options)
+    if type(options) ~= 'table' then return sleepless_interact:removeGlobalPlayer() end
+    local names = {}
+    for _, v in pairs(options) do
+        if type(v) == 'table' and v.name then names[#names + 1] = v.name end
+    end
+    sleepless_interact:removeGlobalPlayer(names)
 end
 
 ---This will add target options to all specified models. This is useful for when you want to add target options to all models of a specific type.

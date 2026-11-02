@@ -40,7 +40,8 @@ end
 ---@return string
 Framework.GetPlayerDob = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.charinfo.birthdate
+    local charinfo = playerData and playerData.charinfo
+    return charinfo and charinfo.birthdate
 end
 
 ---@description Will Display the help text message on the screen
@@ -61,7 +62,9 @@ end
 ---@param metadata table | string
 ---@return table | string | number | boolean
 Framework.GetPlayerMetaData = function(metadata)
-    return Framework.GetPlayerData().metadata[metadata]
+    local playerData = Framework.GetPlayerData()
+    local playerMeta = playerData and playerData.metadata
+    return playerMeta and playerMeta[metadata]
 end
 
 ---@description This will send a notification to the player.
@@ -90,7 +93,8 @@ end
 ---@description This will get the players identifier (citizenid) etc.
 ---@return string
 Framework.GetPlayerIdentifier = function()
-    return Framework.GetPlayerData().citizenid
+    local playerData = Framework.GetPlayerData()
+    return playerData and playerData.citizenid
 end
 
 ---@description This will get the players name (first and last).
@@ -98,7 +102,9 @@ end
 ---@return string
 Framework.GetPlayerName = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.charinfo.firstname, playerData.charinfo.lastname
+    local charinfo = playerData and playerData.charinfo
+    if not charinfo then return nil, nil end
+    return charinfo.firstname, charinfo.lastname
 end
 
 ---@description Depricated : This will return the players job name, job label, job grade label and job grade level
@@ -116,13 +122,16 @@ end
 ---@return table
 Framework.GetPlayerJobData = function()
     local playerData = Framework.GetPlayerData()
-    local jobData = playerData.job
+    -- No job yet while the character is still loading (or none selected).
+    local jobData = playerData and playerData.job
+    if not jobData then return {} end
+    local grade = jobData.grade or {}
     return {
         jobName = jobData.name,
         jobLabel = jobData.label,
-        gradeName = jobData.grade.name,
-        gradeLabel = jobData.grade.name,
-        gradeRank = jobData.grade.level,
+        gradeName = grade.name,
+        gradeLabel = grade.name,
+        gradeRank = grade.level,
         boss = jobData.isboss,
         onDuty = jobData.onduty,
     }
@@ -131,7 +140,8 @@ end
 ---@description This is an internal function used as a fallback, please use the Inventory.GetPlayerInventory instead.
 ---@return table {name, label, count, slot, metadata, stack, close, weight}
 Framework.GetPlayerInventory = function()
-    return Framework.GetPlayerData().items
+    local playerData = Framework.GetPlayerData()
+    return playerData and playerData.items or {}
 end
 
 ---@description This will return the players money by type, I recommend not useing this as its the client and not secure or to be trusted.
@@ -140,8 +150,8 @@ end
 ---@return number
 Framework.GetAccountBalance = function(_type)
     local player = Framework.GetPlayerData()
-    if not player then return 0 end
-    local account = player.money
+    local account = player and player.money
+    if not account then return 0 end
     if _type == 'money' then _type = 'cash' end
     local balance = account[_type] or 0
     if balance <= 0 then return 0 end
@@ -174,7 +184,9 @@ end
 ---@return boolean
 Framework.GetIsPlayerDead = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.metadata["isdead"] or playerData.metadata["inlaststand"]
+    local playerMeta = playerData and playerData.metadata
+    if not playerMeta then return false end
+    return playerMeta["isdead"] or playerMeta["inlaststand"]
 end
 
 ---@description Event handler for when player is loaded in QBX Core framework
