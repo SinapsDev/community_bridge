@@ -53,7 +53,7 @@ end
 ---@return string
 Framework.GetPlayerDob = function()
     local playerData = Framework.GetPlayerData()
-    local dob = playerData.dateofbirth
+    local dob = playerData and playerData.dateofbirth
     return dob
 end
 
@@ -93,7 +93,7 @@ end
 ---@return string
 Framework.GetPlayerIdentifier = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.identifier
+    return playerData and playerData.identifier
 end
 
 ---@description This will get the players name (first and last).
@@ -101,6 +101,7 @@ end
 ---@return string
 Framework.GetPlayerName = function()
     local playerData = Framework.GetPlayerData()
+    if not playerData then return nil, nil end
     return playerData.firstName, playerData.lastName
 end
 
@@ -233,7 +234,7 @@ end
 --- @return boolean
 Framework.GetIsPlayerDead = function()
     local playerData = Framework.GetPlayerData()
-    return playerData.dead
+    return playerData and playerData.dead or false
 end
 
 ---@description Event handler for when player is loaded in ESX framework

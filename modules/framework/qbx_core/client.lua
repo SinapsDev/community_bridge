@@ -93,7 +93,8 @@ end
 ---@description This will get the players identifier (citizenid) etc.
 ---@return string
 Framework.GetPlayerIdentifier = function()
-    return Framework.GetPlayerData().citizenid
+    local playerData = Framework.GetPlayerData()
+    return playerData and playerData.citizenid
 end
 
 ---@description This will get the players name (first and last).
@@ -139,7 +140,8 @@ end
 ---@description This is an internal function used as a fallback, please use the Inventory.GetPlayerInventory instead.
 ---@return table {name, label, count, slot, metadata, stack, close, weight}
 Framework.GetPlayerInventory = function()
-    return Framework.GetPlayerData().items
+    local playerData = Framework.GetPlayerData()
+    return playerData and playerData.items or {}
 end
 
 ---@description This will return the players money by type, I recommend not useing this as its the client and not secure or to be trusted.

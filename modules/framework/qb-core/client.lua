@@ -135,7 +135,8 @@ end
 ---@description This will get the players identifier (citizenid) etc.
 ---@return string
 Framework.GetPlayerIdentifier = function()
-    return Framework.GetPlayerData().citizenid
+    local playerData = Framework.GetPlayerData()
+    return playerData and playerData.citizenid
 end
 
 ---@description This will get the players name (first and last).
