@@ -6,7 +6,7 @@ VehicleKey = VehicleKey or {}
 
 local function acquiresByNetId()
     local version = GetResourceMetadata(resourceName, "version", 0) or ""
-    local major, minor = version:match("^(%d+)%.(%d+)")
+    local major, minor = version:match("(%d+)%.(%d+)")
     major, minor = tonumber(major) or 0, tonumber(minor) or 0
     return major > 1 or (major == 1 and minor >= 6)
 end

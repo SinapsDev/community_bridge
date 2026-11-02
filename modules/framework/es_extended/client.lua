@@ -61,7 +61,9 @@ end
 ---@param metadata table | string
 ---@return table | string | number | boolean
 Framework.GetPlayerMetaData = function(metadata)
-    return Framework.GetPlayerData().metadata[metadata]
+    local playerData = Framework.GetPlayerData()
+    local playerMeta = playerData and playerData.metadata
+    return playerMeta and playerMeta[metadata]
 end
 
 ---@description This will send a notification to the player.
@@ -118,7 +120,9 @@ end
 --- @return table
 Framework.GetPlayerJobData = function()
     local playerData = Framework.GetPlayerData()
-    local jobData = playerData.job
+    -- No job yet while the character is still loading (ESX.PlayerData is {} until esx:playerLoaded).
+    local jobData = playerData and playerData.job
+    if not jobData then return {} end
     local isBoss = (jobData.grade_name == "boss")
     return {
         jobName = jobData.name,
@@ -135,8 +139,9 @@ end
 --- @param search string
 Framework.GetStatusData = function(search)
     local playerData = Framework.GetPlayerData()
-    if not playerData then return 0 end
-    local status = playerData.variables.status
+    local variables = playerData and playerData.variables
+    local status = variables and variables.status
+    if not status then return 0 end
     for _, entry in ipairs(status) do
         if entry.name == search then
             return entry.percent or 0
@@ -173,8 +178,8 @@ end
 --- @return number
 Framework.GetItemCount = function(item)
     local inventory = Framework.GetPlayerInventory()
-    if not inventory then return 0 end
-    return inventory[item].count or 0
+    local entry = inventory and inventory[item]
+    return entry and entry.count or 0
 end
 
 ---@description Return the item info in oxs format, {name, label, stack, weight, description, image}
@@ -188,9 +193,10 @@ end
 --- @return table {name, label, count, slot, metadata, stack, close, weight}
 Framework.GetPlayerInventory = function()
     local playerData = Framework.GetPlayerData()
-    if not playerData then return {} end
+    local inventory = playerData and playerData.inventory
+    if not inventory then return {} end
     local repack = {}
-    for k, v in pairs(playerData.inventory) do
+    for k, v in pairs(inventory) do
         repack[k] = {
             name = v.name,
             label = v.label,
@@ -211,8 +217,8 @@ end
 ---@return number
 Framework.GetAccountBalance = function(_type)
     local player = Framework.GetPlayerData()
-    if not player then return 0 end
-    local accounts = player.accounts
+    local accounts = player and player.accounts
+    if not accounts then return 0 end
     if _type == 'cash' then _type = 'money' end
     for _, account in ipairs(accounts) do
         if account.name == _type then
