@@ -839,8 +839,9 @@ RegisterNetEvent("QBCore:Server:OnPlayerLoaded", function(src)
 end)
 
 ---@description Event handler for when a player is unloaded in QB-Core framework
----qb-spawn, qb-multicharacter and other spawn/character resources fire it from
----the client with no argument (TriggerServerEvent): the sender is the player.
+---qb-core fires it on the server with the player's source (Logout in server/player.lua,
+---playerDropped in server/events.lua), so it takes the argument path in eventPlayer; a
+---client fire only ever acts on its sender.
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerUnload", function(src)
     src = eventPlayer(src)

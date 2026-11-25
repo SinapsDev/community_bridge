@@ -670,8 +670,8 @@ RegisterNetEvent("QBCore:Server:OnPlayerLoaded", function(src)
 end)
 
 ---@description Event handler for when a player is unloaded in QBX Core framework
----qbx_core (client/character.lua), qbx_spawn and multicharacter resources fire it
----from the client with no argument (TriggerServerEvent): the sender is the player.
+---qbx_core fires it on the server with the player's source (Logout, server/player.lua),
+---so it takes the argument path in eventPlayer; a client fire only ever acts on its sender.
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerUnload", function(src)
     src = eventPlayer(src)
