@@ -78,10 +78,12 @@ function ClientFires(fromSrc, name, ...)
     return 'delivered'
 end
 
+-- playerDropped: GetPlayerName still answers inside the handlers, nil once they ran
 function FirePlayerDropped(src)
     local saved = source
     source = src
     for _, fn in ipairs(handlers.playerDropped or {}) do fn('left') end
+    Connected[src] = nil
     source = saved
 end
 
@@ -109,6 +111,31 @@ end
 -- ClientFires that reports a Lua error instead of raising it into Python
 function ClientFiresSafe(...)
     return pcall(ClientFires, ...)
+end
+
+-- a server script firing an event locally (TriggerEvent, source ''); errors reported, not raised
+function ServerFiresSafe(...)
+    local ok, err = pcall(TriggerEvent, ...)
+    return ok, err or 'fired'
+end
+
+-- the community_bridge:Server:* events the bridge forwarded, in order: { name, src, arg2 }
+function Forwarded()
+    local out = {}
+    for _, e in ipairs(Core.fired) do
+        if e.name:find('^community_bridge:Server:') then out[#out + 1] = { e.name, e.args[1], e.args[2] } end
+    end
+    return out
+end
+
+-- stand-in for a consumer resource that keys a table by the forwarded source, as
+-- nn_policejob identity.lua does: a NaN source raises "table index is NaN" here
+function InstallConsumer()
+    ConsumerSeen = {}
+    for _, name in ipairs({ 'community_bridge:Server:OnPlayerLoaded', 'community_bridge:Server:OnPlayerUnload',
+                            'community_bridge:Server:OnPlayerJobChange' }) do
+        ExternalAfter[name] = { function(src) ConsumerSeen[src] = (ConsumerSeen[src] or 0) + 1 end }
+    end
 end
 
 -- fake core ----------------------------------------------------------------
@@ -247,11 +274,22 @@ function Core.AddPlayer(src, cid, first, last, jobName, grade, onduty)
     self.Functions.RemoveItem = function() return true end
     for i = 1, 14 do self.Functions['Extra' .. i] = function() end end -- 22 functions like qbx
     Core.players[src] = self
+    if src == src then Connected[src] = true end
     return self
 end
 
 -- FiveM / bridge globals the module files touch ------------------------------
 GlobalState = {}
+-- FiveM GetPlayerName native: a name for a connected client, nil otherwise. Clients
+-- connect independently of the core (AddPlayer connects them too).
+Connected = {}
+function GetPlayerName(src)
+    local id = tonumber(src)
+    if id and Connected[id] then return 'Player' .. id end
+    return nil
+end
+function Connect(src) Connected[src] = true end
+function Disconnect(src) Connected[src] = nil end
 BridgeLateLoad = { Gate = function() return true end, Frameworks = {} }
 function GetResourceState(name)
     if FLAVOR == 'qbx' and name == 'qbx_core' then return 'started' end
@@ -466,13 +504,17 @@ def equivalence(flavor, new_src, old_src):
         return out
 
     new_net, old_net = net_outcomes(new_src), net_outcomes(old_src)
-    net_diffs = [(k, new_net[k], old_net[k]) for k in new_net if new_net[k] != old_net[k]]
+    # a different outcome is allowed only where 0.13.18 errored and this code does not
+    net_diffs = [(k, new_net[k], old_net[k]) for k in new_net if new_net[k] != old_net[k] and new_net[k] != "ok"]
     for d in net_diffs:
         print("    diff", d)
     for k in new_net:
+        name = f"{k[0]}(src={k[1]}, job={'table' if k[2] else 'nil'})"
         if new_net[k] != "ok" and new_net[k] == old_net[k]:
-            print(f"    same in 0.13.18 (not from this change): {k[0]}(src={k[1]}, job={'table' if k[2] else 'nil'}) -> {new_net[k]}")
-    check(not net_diffs, f"[{flavor}] net events with a NaN or inf source (job table or not): same outcome as 0.13.18")
+            print(f"    same in 0.13.18 (not from this change): {name} -> {new_net[k]}")
+        elif new_net[k] == "ok" and old_net[k] != "ok":
+            print(f"    fixed (0.13.18: {old_net[k]}): {name} -> ok")
+    check(not net_diffs, f"[{flavor}] net events with a NaN or inf source (job table or not): no error 0.13.18 did not have")
 
 
 def invalidation(flavor, src_code):
@@ -586,6 +628,8 @@ def invalidation(flavor, src_code):
                 print("    error", event, res)
         check(all(res[0] is True and res[1] == "delivered" for res in results),
               f"[{flavor}] spoofed {event.split(':')[-1]}(NaN) and (inf) do not error")
+    # from the network these act on the sender (2), so its unload bypass window runs now
+    g.Advance(1000)
     # same answer as for a missing player: nil (qb GetPlayerJobData: {} as in 0.13.18)
     res = [(call(lua, name, bad), call(lua, name, 99)) for name in ("GetPlayerIdentifier", "GetPlayerJobData")
            for bad in (NAN, INF)]
@@ -770,6 +814,176 @@ def invalidation_gaps(flavor, src_code):
           f"[{flavor}] bridge SetPlayerJob: an OnJobUpdate listener dispatched before the bridge reads the new job")
 
 
+NET_EVENTS = {
+    # bridge net event -> the community_bridge event consumers receive
+    "QBCore:Server:OnPlayerLoaded": "community_bridge:Server:OnPlayerLoaded",
+    "QBCore:Server:OnPlayerUnload": "community_bridge:Server:OnPlayerUnload",
+    "QBCore:Server:OnJobUpdate": "community_bridge:Server:OnPlayerJobChange",
+}
+# src arguments that name no player: never forwarded, never touch the cache
+BAD_SOURCES = (0, NAN, INF, 1.5, -1, "abc")
+
+
+def source_hardening(flavor, src_code):
+    """QBCore:Server:OnPlayerLoaded/OnPlayerUnload/OnJobUpdate are registered as net events
+    here, so their src argument is whatever a client sends. From the network the sender is
+    the player and the argument is ignored; from a server TriggerEvent the argument is the
+    player. Only a whole positive id of a connected player (or one the core has) passes."""
+    forwarded_all = []  # every (event, src) the bridge forwarded in this section
+
+    def fresh():
+        lua = load(flavor, src_code)
+        seed(lua, 3)
+        g = lua.globals()
+        for s in (1, 2, 3):  # loaded the normal way: the client fires OnPlayerLoaded with no argument
+            g.ClientFires(s, "QBCore:Server:OnPlayerLoaded")
+        g.InstallConsumer()
+        g.Core.fired = lua.table()
+        for s in (1, 2, 3):
+            call(lua, "GetPlayerIdentifier", s)  # warm entries
+        return lua, g
+
+    def forwarded(lua):
+        # what the bridge forwarded since the last call
+        t = lua.globals().Forwarded()
+        out = [(t[i][1], t[i][2], t[i][3]) for i in range(1, len(t) + 1)]
+        lua.globals().Core.fired = lua.table()
+        forwarded_all.extend((name, src) for name, src, _ in out)
+        return out
+
+    def pairs_of(got):
+        return [(n, s) for n, s, _ in got]
+
+    def cost(lua, src, n=1):
+        before = reads(lua)
+        for _ in range(n):
+            call(lua, "GetPlayerIdentifier", src)
+        return reads(lua) - before
+
+    def job_of(lua, src):
+        return lua.globals().Framework.SearchJobCountBySource(src)
+
+    def recid(lua, src, cid):
+        # the core changes a citizenid with no event: a read only sees it if the entry was dropped
+        lua.globals().Core.players[src]["PlayerData"]["citizenid"] = cid
+
+    def identifier(lua, src):
+        return call(lua, "GetPlayerIdentifier", src)[1]
+
+    def extra(lua, event):
+        if event == "QBCore:Server:OnJobUpdate":
+            return (lua.table_from({"name": "ambulance", "onduty": True}),)
+        return ()
+
+    def err(res):
+        return "" if res[0] is True else str(res[1])
+
+    for event, fwd in NET_EVENTS.items():
+        name = event.split(":")[-1]
+
+        # 1. a client names another player: only the sender is affected
+        lua, g = fresh()
+        recid(lua, 1, "CID001-NEW")
+        recid(lua, 2, "CID002-NEW")
+        res = g.ClientFiresSafe(2, event, 1, *extra(lua, event))
+        got = forwarded(lua)
+        check(res[0] is True and pairs_of(got) == [(fwd, 2)],
+              f"[{flavor}] client 2 fires {name}(1): consumers get it once, for the sender 2 only")
+        # player 1's entry was neither dropped nor refilled: still the value cached before the event
+        check(identifier(lua, 1) == ["CID001"] and cost(lua, 1, 2) == 0 and job_of(lua, 1) == "police",
+              f"[{flavor}] client 2 fires {name}(1): player 1's cache entry and job count are untouched")
+        check(identifier(lua, 2) == ["CID002-NEW"], f"[{flavor}] client 2 fires {name}(1): the sender's own entry is dropped")
+
+        # 2. a client sends 0 / NaN / inf / 1.5 / -1 / 'abc': no error, acts on the sender only
+        outcomes = []
+        for bad in BAD_SOURCES:
+            lua, g = fresh()
+            res = g.ClientFiresSafe(2, event, bad, *extra(lua, event))
+            got = forwarded(lua)
+            ok = res[0] is True and pairs_of(got) == [(fwd, 2)] and isinstance(got[0][1], int) \
+                and cost(lua, 1) == 0 and cost(lua, 3) == 0
+            if not ok:
+                print(f"    {name}({bad!r}) from client 2: {err(res)} forwarded={got}")
+            outcomes.append(ok)
+        check(all(outcomes), f"[{flavor}] client fires {name} with 0/NaN/inf/1.5/-1/'abc': no error, only the sender is affected")
+
+        # 3. a server TriggerEvent with 0 / NaN / inf / 1.5 / -1 / 'abc' / no src: nothing at all
+        outcomes = []
+        for bad in BAD_SOURCES + (None,):
+            lua, g = fresh()
+            counts_before = dict(g.GlobalState.jobcounts.items())
+            if bad is None:
+                res = g.ServerFiresSafe(event)
+            else:
+                res = g.ServerFiresSafe(event, bad, *extra(lua, event))
+            got = forwarded(lua)
+            ok = res[0] is True and got == [] and all(cost(lua, s) == 0 for s in (1, 2, 3)) \
+                and dict(g.GlobalState.jobcounts.items()) == counts_before \
+                and all(job_of(lua, s) == "police" for s in (1, 2, 3))
+            if not ok:
+                print(f"    TriggerEvent({name}, {bad!r}): {err(res)} forwarded={got}")
+            outcomes.append(ok)
+        check(all(outcomes), f"[{flavor}] server TriggerEvent {name} with 0/NaN/inf/1.5/-1/'abc'/no src: "
+                             "no error, nothing forwarded, cache and job counts untouched")
+
+        # 4. a server TriggerEvent with an explicit src still works (how the cores fire it)
+        lua, g = fresh()
+        recid(lua, 1, "CID001-NEW")
+        res = g.ServerFiresSafe(event, 1, *extra(lua, event))
+        got = forwarded(lua)
+        check(res[0] is True and pairs_of(got) == [(fwd, 1)] and cost(lua, 2) == 0 and cost(lua, 3) == 0,
+              f"[{flavor}] server TriggerEvent {name}(1): forwarded once for player 1, other players untouched")
+        check(identifier(lua, 1) == ["CID001-NEW"], f"[{flavor}] server TriggerEvent {name}(1): player 1's entry is dropped")
+
+        # a numeric string from a server script names the same player, forwarded as a number
+        lua, g = fresh()
+        g.ServerFiresSafe(event, "1", *extra(lua, event))
+        got = forwarded(lua)
+        check(pairs_of(got) == [(fwd, 1)] and isinstance(got[0][1], int),
+              f"[{flavor}] server TriggerEvent {name}('1'): forwarded as the number 1")
+
+        # 5. server TriggerEvent for ids that are not players / not connected
+        lua, g = fresh()
+        g.ServerFiresSafe(event, 50, *extra(lua, event))
+        check(forwarded(lua) == [], f"[{flavor}] server TriggerEvent {name}(50), no such player: nothing forwarded")
+        g.Core.AddPlayer(60, "CID060", "Gone", "Client", "police", 0, False)
+        g.Disconnect(60)
+        g.ServerFiresSafe(event, 60, *extra(lua, event))
+        g.Connect(70)  # connected, no character in the core
+        g.ServerFiresSafe(event, 70, *extra(lua, event))
+        check(pairs_of(forwarded(lua)) == [(fwd, 60), (fwd, 70)],
+              f"[{flavor}] server TriggerEvent {name}: a player only the core still has, and a connected one "
+              "with no character, are forwarded")
+
+        # 6. a net event from a sender that is not connected never falls back to the argument
+        lua, g = fresh()
+        res = g.ClientFiresSafe(7, event, 1, *extra(lua, event))
+        check(res[0] is True and forwarded(lua) == [] and cost(lua, 1) == 0,
+              f"[{flavor}] {name} from a sender that is not connected, naming player 1: ignored")
+
+    # 7. the legit client fire (qbx_core / qbx_spawn / qb-spawn / multicharacter: no argument)
+    lua, g = fresh()
+    g.Core.AddPlayer(4, "CID004", "New", "Char", "ambulance", 0, True)
+    g.ClientFires(4, "QBCore:Server:OnPlayerLoaded")
+    check(pairs_of(forwarded(lua)) == [("community_bridge:Server:OnPlayerLoaded", 4)] and job_of(lua, 4) == "ambulance",
+          f"[{flavor}] client fires OnPlayerLoaded with no argument: forwarded for the sender, job counted")
+
+    # 8. the cores' own server-side fires (SetJob -> OnJobUpdate, Logout -> OnPlayerUnload)
+    lua, g = fresh()
+    g.Core.SetJob(1, "ambulance", 0)
+    g.Core.LogoutBegin(3)
+    check(forwarded(lua) == [("community_bridge:Server:OnPlayerJobChange", 1, "ambulance"),
+                             ("community_bridge:Server:OnPlayerUnload", 3, None)]
+          and job_of(lua, 1) == "ambulance" and job_of(lua, 3) is None,
+          f"[{flavor}] core SetJob and Logout (TriggerEvent with src): forwarded with that src, job counts follow")
+
+    # every source consumers received in this section is a whole positive id
+    bad = [(n, s) for n, s in forwarded_all if not (isinstance(s, int) and s > 0)]
+    for b in bad[:5]:
+        print("    forwarded", b)
+    check(bool(forwarded_all) and not bad, f"[{flavor}] consumers received forwarded events only with whole positive sources")
+
+
 def compile_check():
     lua = lua54.LuaRuntime()
     loader = lua.eval("function(src, name) local f, err = load(src, name) return f ~= nil, err end")
@@ -815,6 +1029,7 @@ def main():
         invalidation(flavor, new_src)
         setplayerdata_order(flavor, new_src)
         invalidation_gaps(flavor, new_src)
+        source_hardening(flavor, new_src)
 
     print()
     if FAILURES:

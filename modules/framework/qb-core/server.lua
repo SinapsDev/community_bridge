@@ -119,6 +119,27 @@ local function releasePlayerInfo(src)
     playerInfoBypass[key] = now + PLAYER_INFO_UNLOAD_BYPASS_MS
 end
 
+---Player a QBCore:Server:* handler acts on, or nil to ignore the event.
+---OnPlayerLoaded, OnPlayerUnload and OnJobUpdate are registered as net events
+---here, so a client can fire them with any argument: another player's id, 0,
+---NaN, inf, a fraction. When the event came from the network (source is a
+---player id) the sender is the player and the argument is ignored. When a
+---server script fired it with TriggerEvent (source is ''), the argument is the
+---player, as the cores pass it. Either way only a whole positive id of a
+---connected player, or of one qb-core still has, is accepted. Call it before
+---anything that can yield: source changes on the next event.
+---@param arg any the src argument of the event
+---@return number|nil
+local function eventPlayer(arg)
+    local netSrc = tonumber(source)
+    local candidate = arg
+    if netSrc and netSrc > 0 then candidate = netSrc end
+    local key = cacheKey(candidate)
+    if not key then return nil end
+    if GetPlayerName(key) == nil and not Framework.GetPlayer(key) then return nil end
+    return key
+end
+
 ---@description This will return the name of the framework in use.
 ---@return string
 Framework.GetFrameworkName = function()
@@ -804,9 +825,12 @@ Framework.RegisterUsableItem = function(itemName, cb)
 end
 
 ---@description Event handler for when a player is loaded in QB-Core framework
+---qb-spawn, qb-multicharacter and other spawn/character resources fire it from
+---the client with no argument (TriggerServerEvent): the sender is the player.
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerLoaded", function(src)
-    src = src or source
+    src = eventPlayer(src)
+    if not src then return end
     forgetPlayerInfo(src)
     TriggerEvent("community_bridge:Server:OnPlayerLoaded", src)
     local jobData = Framework.GetPlayerJobData(src)
@@ -815,18 +839,24 @@ RegisterNetEvent("QBCore:Server:OnPlayerLoaded", function(src)
 end)
 
 ---@description Event handler for when a player is unloaded in QB-Core framework
+---qb-spawn, qb-multicharacter and other spawn/character resources fire it from
+---the client with no argument (TriggerServerEvent): the sender is the player.
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerUnload", function(src)
-    src = src or source
+    src = eventPlayer(src)
+    if not src then return end
     releasePlayerInfo(src)
     TriggerEvent("community_bridge:Server:OnPlayerUnload", src)
 end)
 
 ---@description Event handler for when a player's job is updated in QB-Core framework
+---qb-core fires it with TriggerEvent(..., src, job): from Player.Functions.SetJob /
+---SetJobDuty, or, since the 2026-05 refactor, from its QBCore:Server:OnPlayerUpdated handler.
 ---@param src number
 ---@param job table
 RegisterNetEvent("QBCore:Server:OnJobUpdate", function(src, job)
-    src = src or source
+    src = eventPlayer(src)
+    if not src then return end
     forgetPlayerInfo(src)
     if not job then return end
     TriggerEvent("community_bridge:Server:OnPlayerJobChange", src, job.name)
