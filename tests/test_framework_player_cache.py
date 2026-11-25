@@ -101,6 +101,16 @@ function FiredArgs(name, index)
     end
 end
 
+-- handlers this resource (the bridge) registered for an event
+function HandlerCount(name)
+    return #(handlers[name] or {})
+end
+
+-- ClientFires that reports a Lua error instead of raising it into Python
+function ClientFiresSafe(...)
+    return pcall(ClientFires, ...)
+end
+
 -- fake core ----------------------------------------------------------------
 local JOBS = {
     unemployed = { label = 'Civilian', defaultDuty = true, grades = { [0] = { name = 'Freelancer' } } },
@@ -133,6 +143,13 @@ function Core.GetPlayer(src)
     return p and deepcopy(p) or nil
 end
 
+-- Player.Functions.UpdatePlayerData: QBCore:Player:SetPlayerData with the whole PlayerData
+function Core.UpdatePlayerData(p)
+    TriggerEvent('QBCore:Player:SetPlayerData', deepcopy(p.PlayerData))
+end
+
+-- qbx_core 1.23.0 SetPlayerPrimaryJob (server/player.lua:209-211) and qb-core SetJob
+-- (server/player.lua:208-210): mutate, UpdatePlayerData (SetPlayerData), then OnJobUpdate
 function Core.SetJob(src, name, grade)
     local p = find(src)
     if not p then return false end
@@ -142,14 +159,18 @@ function Core.SetJob(src, name, grade)
         return false
     end
     p.PlayerData.job = makeJob(name, grade)
+    Core.UpdatePlayerData(p)
     TriggerEvent('QBCore:Server:OnJobUpdate', p.PlayerData.source, deepcopy(p.PlayerData.job))
     return true
 end
 
+-- qbx_core 1.23.0 SetPlayerPrimaryGang (server/player.lua:433-435) and qb-core SetGang
+-- (server/player.lua:239-241): mutate, UpdatePlayerData (SetPlayerData), then OnGangUpdate
 function Core.SetGang(src, name)
     local p = find(src)
     if not p or not GANGS[name] then return false end
     p.PlayerData.gang = { name = name, label = GANGS[name].label, isboss = false, grade = { name = 'none', level = 0 } }
+    Core.UpdatePlayerData(p)
     TriggerEvent('QBCore:Server:OnGangUpdate', p.PlayerData.source, deepcopy(p.PlayerData.gang))
     return true
 end
@@ -160,13 +181,15 @@ function Core.QbxSetJobDuty(identifier, onDuty)
     if not p then return end
     p.PlayerData.job.onduty = not not onDuty
     TriggerEvent('QBCore:Server:SetDuty', p.PlayerData.source, p.PlayerData.job.onduty)
+    Core.UpdatePlayerData(p)
 end
 
--- qb-core Player.Functions.SetJobDuty (server/player.lua:261): only OnJobUpdate
+-- qb-core Player.Functions.SetJobDuty (server/player.lua:261): only OnJobUpdate, then UpdatePlayerData
 function Core.QbSetJobDuty(src, onDuty)
     local p = find(src)
     p.PlayerData.job.onduty = not not onDuty
     TriggerEvent('QBCore:Server:OnJobUpdate', p.PlayerData.source, deepcopy(p.PlayerData.job))
+    Core.UpdatePlayerData(p)
 end
 
 -- qb-core QBCore:ToggleDuty (server/events.lua:170)
@@ -320,6 +343,11 @@ def seed(lua, n=10):
         core.AddPlayer(i, f"CID{i:03d}", f"First{i}", f"Last{i}", "police", 1, i % 2 == 0)
 
 
+NAN = float("nan")
+INF = float("inf")
+# sources a cache key is never made for: they read the core uncached, as in 0.13.18
+ODD_SOURCES = (NAN, INF, -INF, 0, -1, 1.5, "abc")
+
 HOT_GETTERS = ["GetPlayerIdentifier", "GetPlayerJobData", "GetPlayerDuty", "GetPlayerName", "GetPlayerJob"]
 ALL_GETTERS = HOT_GETTERS + ["GetPlayerDob", "GetPlayerPhone", "GetPlayerGang"]
 
@@ -387,12 +415,12 @@ def equivalence(flavor, new_src, old_src):
 
     def snapshot(lua):
         out = {}
-        for src in (1, 2, 3, "2", 99):
+        for src in (1, 2, 3, "2", 99) + ODD_SOURCES:
             for g in ALL_GETTERS:
                 res = call(lua, g, src)
                 if res[0] == "error":
                     res = ("error", "")
-                out[(src, g)] = res
+                out[(repr(src), g)] = res
         return out
 
     def run(src_code):
@@ -422,7 +450,29 @@ def equivalence(flavor, new_src, old_src):
                 diffs.append((i, key, a[key], b[key]))
     for d in diffs[:10]:
         print("    diff", d)
-    check(not diffs, f"[{flavor}] every getter returns what 0.13.18 returned (4 states, srcs 1/2/3/'2'/99)")
+    check(not diffs, f"[{flavor}] every getter returns what 0.13.18 returned (4 states, srcs 1/2/3/'2'/99 and NaN/inf/-inf/0/-1/1.5/'abc')")
+
+    # spoofed net events with a NaN or inf source, with and without a job table
+    def net_outcomes(src_code):
+        out = {}
+        for event in ("QBCore:Server:OnJobUpdate", "QBCore:Server:OnPlayerLoaded", "QBCore:Server:OnPlayerUnload"):
+            for bad in (NAN, INF):
+                for with_job in (False, True):
+                    lua = load(flavor, src_code)
+                    seed(lua, 3)
+                    extra = (lua.table_from({"name": "police", "onduty": True}),) if with_job else ()
+                    res = lua.globals().ClientFiresSafe(2, event, bad, *extra)
+                    out[(event.split(":")[-1], repr(bad), with_job)] = "ok" if res[0] is True else "error: " + str(res[1])
+        return out
+
+    new_net, old_net = net_outcomes(new_src), net_outcomes(old_src)
+    net_diffs = [(k, new_net[k], old_net[k]) for k in new_net if new_net[k] != old_net[k]]
+    for d in net_diffs:
+        print("    diff", d)
+    for k in new_net:
+        if new_net[k] != "ok" and new_net[k] == old_net[k]:
+            print(f"    same in 0.13.18 (not from this change): {k[0]}(src={k[1]}, job={'table' if k[2] else 'nil'}) -> {new_net[k]}")
+    check(not net_diffs, f"[{flavor}] net events with a NaN or inf source (job table or not): same outcome as 0.13.18")
 
 
 def invalidation(flavor, src_code):
@@ -527,6 +577,30 @@ def invalidation(flavor, src_code):
           f"[{flavor}] QBCore:Server:SetDuty handler is not net-callable")
     check(g.ClientFires(2, "QBCore:Server:OnJobUpdate", "garbage") == "delivered",
           f"[{flavor}] spoofed OnJobUpdate with a bad source does not error")
+    # NaN is truthy and t[NaN] = nil raises "table index is NaN": a client must not be able
+    # to raise script errors through the net events with TriggerServerEvent(..., 0/0)
+    for event in ("QBCore:Server:OnJobUpdate", "QBCore:Server:OnPlayerLoaded", "QBCore:Server:OnPlayerUnload"):
+        results = [g.ClientFiresSafe(2, event, bad) for bad in (NAN, INF)]
+        for res in results:
+            if res[0] is not True:
+                print("    error", event, res)
+        check(all(res[0] is True and res[1] == "delivered" for res in results),
+              f"[{flavor}] spoofed {event.split(':')[-1]}(NaN) and (inf) do not error")
+    # same answer as for a missing player: nil (qb GetPlayerJobData: {} as in 0.13.18)
+    res = [(call(lua, name, bad), call(lua, name, 99)) for name in ("GetPlayerIdentifier", "GetPlayerJobData")
+           for bad in (NAN, INF)]
+    check(all(got == missing and got[0] == "ok" for got, missing in res)
+          and res[0][0] == ("ok", []),
+          f"[{flavor}] GetPlayerIdentifier / GetPlayerJobData of a NaN or inf source: no error, same as a missing player")
+    # a core that did return a player for these sources: never cached, every read goes to the core
+    uncached = []
+    for odd in (0, -1, 1.5, INF):
+        core.AddPlayer(odd, "CIDODD", "Odd", "Source", "unemployed", 0, False)
+        before = reads(lua)
+        a, b = call(lua, "GetPlayerIdentifier", odd), call(lua, "GetPlayerIdentifier", odd)
+        uncached.append(a == b == ("ok", ["CIDODD"]) and reads(lua) - before == 2)
+        core.players[odd] = None
+    check(all(uncached), f"[{flavor}] sources 0, -1, 1.5 and inf are read uncached (no cache key)")
 
     # string src that is not a number (license) is never cached
     before = reads(lua)
@@ -574,6 +648,128 @@ def invalidation(flavor, src_code):
     check(call(lua, "GetPlayerIdentifier", 2) == ("ok", []), f"[{flavor}] after the core removes a dropped player: nil at once")
 
 
+def setplayerdata_order(flavor, src_code):
+    """Both cores fire QBCore:Player:SetPlayerData BEFORE OnJobUpdate/OnGangUpdate (qbx_core
+    1.23.0 server/player.lua:209-211, 433-435; qb-core server/player.lua:208-210, 239-241).
+    The bridge deliberately does not listen to SetPlayerData (it carries the whole PlayerData
+    and fires on every money/metadata/inventory sync), so a SetPlayerData listener that reads
+    job or gang through the bridge gets the cached OLD value when the entry was filled in the
+    last 2 s. These checks pin that behaviour down so it stays documented, not hidden."""
+    lua = load(flavor, src_code)
+    seed(lua, 3)
+    g = lua.globals()
+    core = g.Core
+    check(g.HandlerCount("QBCore:Player:SetPlayerData") == 0,
+          f"[{flavor}] the bridge has no QBCore:Player:SetPlayerData handler (no full PlayerData unpack)")
+
+    seen = []
+    lua.eval("""function(sink)
+        ExternalAfter['QBCore:Player:SetPlayerData'] = { function(pd)
+            local jd = Framework.GetPlayerJobData(pd.source)
+            sink(jd and jd.jobName, Framework.GetPlayerGang(pd.source), Framework.GetPlayerDuty(pd.source))
+        end }
+    end""")(lambda *v: seen.append(v))
+
+    def r(name, src=1):
+        return call(lua, name, src)[1]
+
+    # job changed by the core, entry filled < 2 s ago: stale inside SetPlayerData, fresh after OnJobUpdate
+    r("GetPlayerJobData")
+    seen.clear()
+    core.SetJob(1, "ambulance", 0)
+    check(bool(seen) and seen[0][0] == "police",
+          f"[{flavor}] core SetJob, entry filled < 2 s ago: a SetPlayerData listener reads the OLD job (known limit)")
+    check(r("GetPlayerJobData")[0]["jobName"] == "ambulance",
+          f"[{flavor}] core SetJob: right after OnJobUpdate the bridge reads the new job")
+
+    # same change with an entry older than the TTL: the listener reads the core, so it is fresh
+    g.Advance(2000)
+    seen.clear()
+    core.SetJob(1, "police", 1)
+    check(bool(seen) and seen[0][0] == "police" and r("GetPlayerJob")[0] == "police",
+          f"[{flavor}] core SetJob, entry older than 2 s: the SetPlayerData listener reads the new job")
+
+    # gang: same order, same limit
+    r("GetPlayerGang")
+    seen.clear()
+    core.SetGang(1, "ballas")
+    check(bool(seen) and seen[0][1] == "none" and r("GetPlayerGang")[0] == "ballas",
+          f"[{flavor}] core SetGang, entry filled < 2 s ago: SetPlayerData listener reads the OLD gang, fresh after OnGangUpdate")
+
+    # duty: both cores fire the duty event first and SetPlayerData after it, so the listener is fresh
+    was = r("GetPlayerDuty")[0]
+    seen.clear()
+    if flavor == "qbx":
+        core.QbxSetJobDuty(1, not was)
+    else:
+        core.QbSetJobDuty(1, not was)
+    check(bool(seen) and seen[-1][2] == (not was),
+          f"[{flavor}] duty changed by the core: SetPlayerData fires after the duty event, the listener reads the new duty")
+
+    # changes through the bridge setter: the drop-before means the listener reads the new job
+    r("GetPlayerJobData", 2)
+    seen.clear()
+    call(lua, "SetPlayerJob", 2, "ambulance", 0)
+    check(bool(seen) and seen[0][0] == "ambulance",
+          f"[{flavor}] bridge SetPlayerJob: the SetPlayerData listener reads the new job")
+
+
+def invalidation_gaps(flavor, src_code):
+    """Checks that fail when one specific invalidation is removed (review of PR #19)."""
+    def fresh():
+        lua = load(flavor, src_code)
+        seed(lua, 3)
+        return lua, lua.globals(), lua.globals().Core
+
+    def r(lua, name, src):
+        return call(lua, name, src)[1]
+
+    # (a) duty set without OnJobUpdate, only QBCore:Server:SetDuty fired (e.g. SetPlayerData('job') + SetDuty)
+    lua, g, core = fresh()
+    was = r(lua, "GetPlayerDuty", 1)[0]
+    lua.eval("""function(src, d)
+        Core.players[src].PlayerData.job.onduty = d
+        TriggerEvent('QBCore:Server:SetDuty', src, d)
+    end""")(1, not was)
+    check(r(lua, "GetPlayerDuty", 1)[0] == (not was),
+          f"[{flavor}] only QBCore:Server:SetDuty fired (no OnJobUpdate): next GetPlayerDuty is fresh")
+
+    # (b) qbx: logout slower than the 1 s bypass, entry refilled before the player is removed
+    if flavor == "qbx":
+        lua, g, core = fresh()
+        r(lua, "GetPlayerIdentifier", 3)
+        core.LogoutBegin(3)
+        g.Advance(1000)
+        r(lua, "GetPlayerIdentifier", 3)
+        before = reads(lua)
+        refilled = r(lua, "GetPlayerIdentifier", 3) == ["CID003"] and reads(lua) == before
+        check(refilled, "[qbx] slow logout: after the 1 s bypass the old character is cached again")
+        core.LogoutFinish(3)
+        check(call(lua, "GetPlayerIdentifier", 3) == ("ok", []),
+              "[qbx] slow logout: qbx_core:server:playerLoggedOut drops it, GetPlayerIdentifier is nil at once")
+
+    # (c) character swapped with no unload events and no time passing, then OnPlayerLoaded
+    lua, g, core = fresh()
+    r(lua, "GetPlayerIdentifier", 2)
+    core.AddPlayer(2, "CID777", "Swapped", "Char", "unemployed", 0, False)
+    stale = r(lua, "GetPlayerIdentifier", 2)
+    g.ClientFires(2, "QBCore:Server:OnPlayerLoaded")
+    check(stale == ["CID002"] and r(lua, "GetPlayerIdentifier", 2) == ["CID777"]
+          and r(lua, "GetPlayerName", 2) == ["Swapped", "Char"],
+          f"[{flavor}] OnPlayerLoaded alone (no unload, no TTL expiry) drops the old character at once")
+
+    # (d) bridge SetPlayerJob: an OnJobUpdate listener dispatched before the bridge's handler
+    lua, g, core = fresh()
+    r(lua, "GetPlayerJobData", 3)
+    seen = []
+    lua.eval("""function(sink)
+        ExternalBefore['QBCore:Server:OnJobUpdate'] = { function(src) sink(Framework.GetPlayerJobData(src).jobName) end }
+    end""")(seen.append)
+    call(lua, "SetPlayerJob", 3, "ambulance", 0)
+    check(seen == ["ambulance"],
+          f"[{flavor}] bridge SetPlayerJob: an OnJobUpdate listener dispatched before the bridge reads the new job")
+
+
 def compile_check():
     lua = lua54.LuaRuntime()
     loader = lua.eval("function(src, name) local f, err = load(src, name) return f ~= nil, err end")
@@ -617,6 +813,8 @@ def main():
         if old_src:
             equivalence(flavor, new_src, old_src)
         invalidation(flavor, new_src)
+        setplayerdata_order(flavor, new_src)
+        invalidation_gaps(flavor, new_src)
 
     print()
     if FAILURES:

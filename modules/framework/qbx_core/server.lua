@@ -51,12 +51,25 @@ local function snapshotPlayerData(playerData)
     }
 end
 
+---Cache key of a source: a whole positive number, or nil when the source is not
+---cached (a license or other non-numeric string, NaN, inf, 0, a negative or a
+---fraction); reads for such a source go to qbx_core uncached, as in 0.13.18.
+---Some invalidation events are net events, so src can be anything a client sends,
+---and NaN must never reach a table index ("table index is NaN").
+---@param src any
+---@return number|nil
+local function cacheKey(src)
+    local key = tonumber(src)
+    if not key or key ~= key or key <= 0 or key == math.huge or key % 1 ~= 0 then return nil end
+    return key
+end
+
 ---Read-only identity/job snapshot of a player. Never hand it out: the getters
 ---below return single values or new tables built from it.
 ---@param src number
 ---@return table|false|nil snapshot, false when the player has no PlayerData, nil when there is no player
 local function getPlayerInfo(src)
-    local key = tonumber(src)
+    local key = cacheKey(src)
     local now = GetGameTimer()
     if key then
         local entry = playerInfoCache[key]
@@ -83,17 +96,17 @@ local function getPlayerInfo(src)
 end
 
 ---Drops the cached identity/job of a player (job, duty or gang changed, or a character loaded).
----@param src number|string|nil
+---@param src any
 local function forgetPlayerInfo(src)
-    local key = tonumber(src)
+    local key = cacheKey(src)
     if key then playerInfoCache[key] = nil end
 end
 
 ---Drops the cached identity/job of a player whose character is unloading or who left,
 ---and reads it uncached for PLAYER_INFO_UNLOAD_BYPASS_MS.
----@param src number|string|nil
+---@param src any
 local function releasePlayerInfo(src)
-    local key = tonumber(src)
+    local key = cacheKey(src)
     if not key then return end
     playerInfoCache[key] = nil
     local now = GetGameTimer()
