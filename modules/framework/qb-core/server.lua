@@ -8,6 +8,104 @@ QBCore = exports['qb-core']:GetCoreObject()
 
 Framework.Shared = QBCore.Shared
 
+-- Identity and job reads (GetPlayerIdentifier, GetPlayerName, GetPlayerJobData,
+-- GetPlayerDuty, ...) each fetched the whole Player through
+-- QBCore.Functions.GetPlayer(src): PlayerData with the full inventory plus every
+-- Player.Functions entry as a function reference, copied across resources on
+-- every call. Resources that walk their officers or units call these many times
+-- per tick, so they now share a short-lived per-source copy of only the fields
+-- they read (citizenid, name, birthdate, phone, job, gang). Framework.GetPlayer,
+-- money, items and metadata are still read live.
+--
+-- The copy is dropped on every job, duty, gang, load, unload and drop event and
+-- around the bridge's own setters. Events only drop it, the data always comes
+-- from qb-core (some of these events are net events a client can fire).
+-- PLAYER_INFO_TTL_MS bounds it when qb-core changes a field without an event
+-- (Player.Functions.SetPlayerData('charinfo' / 'job', ...)).
+local PLAYER_INFO_TTL_MS = 2000
+-- After an unload or drop the character is still in qb-core for a moment
+-- (Logout waits 200 ms); reads in this window go to qb-core uncached.
+local PLAYER_INFO_UNLOAD_BYPASS_MS = 1000
+
+local playerInfoCache = {}  -- src -> snapshot
+local playerInfoBypass = {} -- src -> GetGameTimer() until which reads skip the cache
+
+local function snapshotPlayerData(playerData)
+    local charinfo = type(playerData.charinfo) == 'table' and playerData.charinfo or nil
+    local job = type(playerData.job) == 'table' and playerData.job or nil
+    local jobGrade = job and type(job.grade) == 'table' and job.grade or nil
+    local gang = type(playerData.gang) == 'table' and playerData.gang or nil
+    return {
+        citizenid = playerData.citizenid,
+        charinfo = charinfo and {
+            firstname = charinfo.firstname,
+            lastname = charinfo.lastname,
+            birthdate = charinfo.birthdate,
+            phone = charinfo.phone,
+        } or nil,
+        job = job and {
+            name = job.name,
+            label = job.label,
+            isboss = job.isboss,
+            onduty = job.onduty,
+            grade = jobGrade and { name = jobGrade.name, level = jobGrade.level } or nil,
+        } or nil,
+        gang = gang and { name = gang.name } or nil,
+    }
+end
+
+---Read-only identity/job snapshot of a player. Never hand it out: the getters
+---below return single values or new tables built from it.
+---@param src number
+---@return table|false|nil snapshot, false when the player has no PlayerData, nil when there is no player
+local function getPlayerInfo(src)
+    local key = tonumber(src)
+    local now = GetGameTimer()
+    if key then
+        local entry = playerInfoCache[key]
+        if entry and entry.expires > now then return entry end
+        playerInfoCache[key] = nil
+    end
+    local player = Framework.GetPlayer(src)
+    if not player then return nil end
+    local playerData = player.PlayerData
+    if type(playerData) ~= 'table' then return false end
+    local entry = snapshotPlayerData(playerData)
+    if key then
+        local bypassUntil = playerInfoBypass[key]
+        if bypassUntil and bypassUntil <= now then
+            playerInfoBypass[key] = nil
+            bypassUntil = nil
+        end
+        if not bypassUntil then
+            entry.expires = now + PLAYER_INFO_TTL_MS
+            playerInfoCache[key] = entry
+        end
+    end
+    return entry
+end
+
+---Drops the cached identity/job of a player (job, duty or gang changed, or a character loaded).
+---@param src number|string|nil
+local function forgetPlayerInfo(src)
+    local key = tonumber(src)
+    if key then playerInfoCache[key] = nil end
+end
+
+---Drops the cached identity/job of a player whose character is unloading or who left,
+---and reads it uncached for PLAYER_INFO_UNLOAD_BYPASS_MS.
+---@param src number|string|nil
+local function releasePlayerInfo(src)
+    local key = tonumber(src)
+    if not key then return end
+    playerInfoCache[key] = nil
+    local now = GetGameTimer()
+    for other, untilMs in pairs(playerInfoBypass) do
+        if untilMs <= now then playerInfoBypass[other] = nil end
+    end
+    playerInfoBypass[key] = now + PLAYER_INFO_UNLOAD_BYPASS_MS
+end
+
 ---@description This will return the name of the framework in use.
 ---@return string
 Framework.GetFrameworkName = function()
@@ -36,10 +134,9 @@ end
 ---@param src number
 ---@return string | nil
 Framework.GetPlayerIdentifier = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return end
-    local playerData = player.PlayerData
-    return playerData.citizenid
+    local info = getPlayerInfo(src)
+    if not info then return end
+    return info.citizenid
 end
 
 ---@description Returns the player data of the specified source in the framework defualt format.
@@ -87,20 +184,18 @@ end
 ---@description Returns the first and last name of the player.
 ---@return string|nil, string|nil
 Framework.GetPlayerName = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return end
-    local playerData = player.PlayerData
-    return playerData.charinfo.firstname, playerData.charinfo.lastname
+    local info = getPlayerInfo(src)
+    if not info then return end
+    return info.charinfo.firstname, info.charinfo.lastname
 end
 
 ---@description Returns the player date of birth.
 ---@param src number
 ---@return string|nil
 Framework.GetPlayerDob = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return end
-    local playerData = player.PlayerData
-    return playerData.charinfo.birthdate
+    local info = getPlayerInfo(src)
+    if not info then return end
+    return info.charinfo.birthdate
 end
 
 ---@description Returns a table of items matching the specified name and if passed metadata from the player's inventory.
@@ -364,20 +459,18 @@ end
 ---@param src number
 ---@return string | nil
 Framework.GetPlayerPhone = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return end
-    local playerData = player.PlayerData
-    return playerData.charinfo.phone
+    local info = getPlayerInfo(src)
+    if not info then return end
+    return info.charinfo.phone
 end
 
 ---@description Returns the gang name of the player.
 ---@param src number
 ---@return string | nil
 Framework.GetPlayerGang = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return end
-    local playerData = player.PlayerData
-    return playerData.gang.name
+    local info = getPlayerInfo(src)
+    if not info then return end
+    return info.gang.name
 end
 
 ---@description This will get a table of player sources that have the specified job name.
@@ -405,10 +498,9 @@ end
 ---@param src number
 ---@return table | nil
 Framework.GetPlayerJobData = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return { } end
-    local playerData = player.PlayerData
-    local jobData = playerData.job
+    local info = getPlayerInfo(src)
+    if not info then return { } end
+    local jobData = info.job
     return {
         jobName = jobData.name,
         jobLabel = jobData.label,
@@ -424,22 +516,25 @@ end
 ---@param src number
 ---@return boolean | nil
 Framework.GetPlayerDuty = function(src)
-    local player = Framework.GetPlayer(src)
-    if not player then return false end
-    local playerData = player.PlayerData
-    if not playerData.job.onduty then return false end
+    local info = getPlayerInfo(src)
+    if not info then return false end
+    if not info.job.onduty then return false end
     return true
 end
 
 --- @description This will toggle a players duty status
+--- qb-core's Player.Functions.SetJobDuty only fires QBCore:Server:OnJobUpdate, so
+--- QBCore:Server:SetDuty is fired here with the status the player now has.
 --- @param src number
 --- @param status boolean
 --- @return boolean
 Framework.SetPlayerDuty = function(src, status)
     local player = Framework.GetPlayer(src)
     if not player then return false end
+    forgetPlayerInfo(src)
     player.Functions.SetJobDuty(status)
-    TriggerEvent('QBCore:Server:SetDuty', src, player.PlayerData.job.onduty)
+    forgetPlayerInfo(src)
+    TriggerEvent('QBCore:Server:SetDuty', src, Framework.GetPlayerDuty(src))
     return true
 end
 
@@ -451,7 +546,10 @@ end
 Framework.SetPlayerJob = function(src, name, grade)
     local player = Framework.GetPlayer(src)
     if not player then return false end
-    return player.Functions.SetJob(name, grade)
+    forgetPlayerInfo(src)
+    local result = table.pack(player.Functions.SetJob(name, grade))
+    forgetPlayerInfo(src)
+    return table.unpack(result, 1, result.n)
 end
 
 ---@description This will add money based on the type of account (money/bank)
@@ -696,6 +794,7 @@ end
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerLoaded", function(src)
     src = src or source
+    forgetPlayerInfo(src)
     TriggerEvent("community_bridge:Server:OnPlayerLoaded", src)
     local jobData = Framework.GetPlayerJobData(src)
     if not jobData then return end
@@ -706,6 +805,7 @@ end)
 ---@param src number
 RegisterNetEvent("QBCore:Server:OnPlayerUnload", function(src)
     src = src or source
+    releasePlayerInfo(src)
     TriggerEvent("community_bridge:Server:OnPlayerUnload", src)
 end)
 
@@ -714,13 +814,25 @@ end)
 ---@param job table
 RegisterNetEvent("QBCore:Server:OnJobUpdate", function(src, job)
     src = src or source
+    forgetPlayerInfo(src)
     if not job then return end
     TriggerEvent("community_bridge:Server:OnPlayerJobChange", src, job.name)
+end)
+
+-- Cached identity/job invalidation only (see PLAYER_INFO_TTL_MS). Server-side
+-- events: AddEventHandler, so a client cannot fire them here.
+AddEventHandler("QBCore:Server:SetDuty", function(src)
+    forgetPlayerInfo(src)
+end)
+
+AddEventHandler("QBCore:Server:OnGangUpdate", function(src)
+    forgetPlayerInfo(src)
 end)
 
 ---@description Event handler for when a player disconnects from the server
 AddEventHandler("playerDropped", function()
     local src = source
+    releasePlayerInfo(src)
     TriggerEvent("community_bridge:Server:OnPlayerUnload", src)
 end)
 
